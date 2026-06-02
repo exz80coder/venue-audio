@@ -7,6 +7,9 @@ from audio_monitor import get_audio_level
 from ffmpeg_service import start_stream, stop_stream, stream_status, STREAM_DIR
 
 
+WEBRTC_URL = "http://192.168.0.2:8889/venueaudio"
+
+
 class Handler(BaseHTTPRequestHandler):
 
     def send_json(self, body, status=200):
@@ -14,6 +17,7 @@ class Handler(BaseHTTPRequestHandler):
 
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
+        self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
         self.wfile.write(data)
@@ -33,7 +37,85 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def send_listen_page(self):
+        html = f"""
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Venue Audio</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    body {{
+      font-family: Arial, sans-serif;
+      background: #10131a;
+      color: white;
+      text-align: center;
+      padding: 40px 20px;
+      margin: 0;
+    }}
+    .card {{
+      max-width: 420px;
+      margin: auto;
+      background: #1b2230;
+      border: 1px solid #30394d;
+      border-radius: 20px;
+      padding: 30px;
+    }}
+    h1 {{
+      margin-top: 0;
+      font-size: 32px;
+    }}
+    p {{
+      color: #c8d0df;
+      font-size: 17px;
+      line-height: 1.5;
+    }}
+    a {{
+      display: block;
+      background: #2f80ed;
+      color: white;
+      padding: 18px;
+      border-radius: 14px;
+      text-decoration: none;
+      font-size: 20px;
+      font-weight: bold;
+      margin-top: 24px;
+    }}
+    .small {{
+      margin-top: 20px;
+      font-size: 13px;
+      color: #8f9bb0;
+    }}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Venue Audio</h1>
+    <p>Listen to the live TV audio on your phone.</p>
+    <a href="{WEBRTC_URL}">Tap to Listen</a>
+    <p class="small">Use your phone volume controls after joining.</p>
+  </div>
+</body>
+</html>
+"""
+        data = html.encode("utf-8")
+
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
     def do_GET(self):
+
+        if self.path == "/":
+            self.send_listen_page()
+            return
+
+        if self.path == "/listen":
+            self.send_listen_page()
+            return
 
         if self.path == "/health":
             self.send_json({
@@ -46,7 +128,8 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/audio-status":
             self.send_json({
                 "status": "ok",
-                "audio": get_audio_level()
+                "audio": get_audio_level(),
+                "timestamp": datetime.now(timezone.utc).isoformat()
             })
             return
 
