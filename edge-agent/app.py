@@ -2,6 +2,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from datetime import datetime, timezone
 import json
 import os
+import subprocess
 
 from audio_monitor import get_audio_level
 from ffmpeg_service import start_stream, stop_stream, stream_status, STREAM_DIR
@@ -33,8 +34,46 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
-    def do_GET(self):
+    def stream_mp3(self):
+        self.send_response(200)
+        self.send_header("Content-Type", "audio/mpeg")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Cache-Control", "no-cache")
+        self.end_headers()
 
+        cmd = [
+            "ffmpeg",
+            "-fflags", "nobuffer",
+            "-f", "alsa",
+            "-ar", "48000",
+            "-ac", "2",
+            "-i", "plughw:0,0",
+            "-vn",
+            "-acodec", "libmp3lame",
+            "-b:a", "128k",
+            "-f", "mp3",
+            "-"
+        ]
+
+        process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL
+        )
+
+        try:
+            while True:
+                chunk = process.stdout.read(1024)
+                if not chunk:
+                    break
+                self.wfile.write(chunk)
+                self.wfile.flush()
+        except BrokenPipeError:
+            pass
+        finally:
+            process.terminate()
+
+    def do_GET(self):
         if self.path == "/health":
             self.send_json({
                 "status": "ok",
@@ -52,6 +91,10 @@ class Handler(BaseHTTPRequestHandler):
 
         if self.path == "/stream/status":
             self.send_json(stream_status())
+            return
+
+        if self.path == "/stream/live.mp3":
+            self.stream_mp3()
             return
 
         if self.path == "/stream/live.m3u8":
@@ -72,7 +115,6 @@ class Handler(BaseHTTPRequestHandler):
         self.send_json({"error": "not found"}, 404)
 
     def do_POST(self):
-
         if self.path == "/stream/start":
             self.send_json(start_stream())
             return
