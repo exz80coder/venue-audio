@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.pyc
+
+# Audio test files
+*.wav
+*.mp3
+*.ogg
+
+# Generated stream files
+edge-agent/stream/
+
+# Backup files
+*.save
+*.bak
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Virtual environments
+venv/
+.env
