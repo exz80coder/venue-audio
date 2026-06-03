@@ -3,9 +3,9 @@ from datetime import datetime, timezone
 import json
 import os
 
-from audio_monitor import get_audio_level
 from ffmpeg_service import start_stream, stop_stream, stream_status, STREAM_DIR
 from streams import STREAMS
+from analytics import record_visit, record_listen_click, get_stats
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -14,13 +14,8 @@ class Handler(BaseHTTPRequestHandler):
         host = self.headers.get("Host", "localhost:3000")
         return host.split(":")[0]
 
-    def get_webrtc_url(self):
-        hostname = self.get_host_name()
-        return f"http://{hostname}:8889/venueaudio"
-
     def send_json(self, body, status=200):
         data = json.dumps(body).encode("utf-8")
-
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Access-Control-Allow-Origin", "*")
@@ -43,9 +38,22 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
-    def send_listen_page(self):
-        hostname = self.get_host_name()
+    def send_html(self, html):
+        data = html.encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
 
+    def send_listen_page(self):
+        record_visit(
+            self.client_address[0],
+            self.headers.get("User-Agent", "")
+        )
+
+        hostname = self.get_host_name()
         buttons = ""
 
         for stream_id, stream in STREAMS.items():
@@ -133,14 +141,7 @@ class Handler(BaseHTTPRequestHandler):
 </body>
 </html>
 """
-        data = html.encode("utf-8")
-
-        self.send_response(200)
-        self.send_header("Content-Type", "text/html")
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Content-Length", str(len(data)))
-        self.end_headers()
-        self.wfile.write(data)
+        self.send_html(html)
 
     def send_stream_page(self, stream_id):
         stream = STREAMS.get(stream_id)
@@ -152,6 +153,12 @@ class Handler(BaseHTTPRequestHandler):
         if not stream["enabled"]:
             self.send_json({"error": "stream not enabled"}, 404)
             return
+
+        record_listen_click(
+            stream_id,
+            self.client_address[0],
+            self.headers.get("User-Agent", "")
+        )
 
         hostname = self.get_host_name()
         webrtc_url = f"http://{hostname}:8889/{stream['path']}"
@@ -211,14 +218,100 @@ class Handler(BaseHTTPRequestHandler):
 </body>
 </html>
 """
-        data = html.encode("utf-8")
+        self.send_html(html)
 
-        self.send_response(200)
-        self.send_header("Content-Type", "text/html")
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Content-Length", str(len(data)))
-        self.end_headers()
-        self.wfile.write(data)
+    def send_admin_page(self):
+        stats = get_stats()
+
+        html = f"""
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Venue Audio Admin</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="refresh" content="10">
+  <style>
+    body {{
+      font-family: Arial, sans-serif;
+      background: #10131a;
+      color: white;
+      margin: 0;
+      padding: 24px;
+    }}
+    h1 {{
+      font-size: 42px;
+      margin: 0 0 24px 0;
+    }}
+    .grid {{
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 18px;
+    }}
+    .card {{
+      background: #1b2230;
+      border: 1px solid #30394d;
+      border-radius: 20px;
+      padding: 24px;
+    }}
+    .label {{
+      color: #9aa8c0;
+      font-size: 18px;
+    }}
+    .value {{
+      font-size: 48px;
+      font-weight: bold;
+      margin-top: 10px;
+    }}
+    .ok {{
+      color: #63e6be;
+    }}
+    .small {{
+      color: #9aa8c0;
+      font-size: 15px;
+      margin-top: 24px;
+    }}
+  </style>
+</head>
+<body>
+  <h1>Venue Audio Dashboard</h1>
+
+  <div class="grid">
+    <div class="card">
+      <div class="label">System</div>
+      <div class="value ok">LIVE</div>
+    </div>
+
+    <div class="card">
+      <div class="label">Stream Mode</div>
+      <div class="value">WebRTC</div>
+    </div>
+
+    <div class="card">
+      <div class="label">Visits Today</div>
+      <div class="value">{stats["today_visits"]}</div>
+    </div>
+
+    <div class="card">
+      <div class="label">Listen Clicks Today</div>
+      <div class="value">{stats["today_listen_clicks"]}</div>
+    </div>
+
+    <div class="card">
+      <div class="label">Total Visits</div>
+      <div class="value">{stats["total_visits"]}</div>
+    </div>
+
+    <div class="card">
+      <div class="label">Total Listen Clicks</div>
+      <div class="value">{stats["total_listen_clicks"]}</div>
+    </div>
+  </div>
+
+  <p class="small">This page refreshes every 10 seconds.</p>
+</body>
+</html>
+"""
+        self.send_html(html)
 
     def do_GET(self):
 
@@ -230,18 +323,19 @@ class Handler(BaseHTTPRequestHandler):
             self.send_listen_page()
             return
 
+        if self.path.startswith("/listen/"):
+            stream_id = self.path.replace("/listen/", "")
+            self.send_stream_page(stream_id)
+            return
+
+        if self.path == "/admin":
+            self.send_admin_page()
+            return
+
         if self.path == "/health":
             self.send_json({
                 "status": "ok",
                 "service": "venue-audio-edge-agent",
-                "timestamp": datetime.now(timezone.utc).isoformat()
-            })
-            return
-
-        if self.path == "/audio-status":
-            self.send_json({
-                "status": "ok",
-                "audio": get_audio_level(),
                 "timestamp": datetime.now(timezone.utc).isoformat()
             })
             return
@@ -263,11 +357,6 @@ class Handler(BaseHTTPRequestHandler):
                 f"{STREAM_DIR}/{filename}",
                 "video/MP2T"
             )
-            return
-
-        if self.path.startswith("/listen/"):
-            stream_id = self.path.replace("/listen/", "")
-            self.send_stream_page(stream_id)
             return
 
         self.send_json({"error": "not found"}, 404)
