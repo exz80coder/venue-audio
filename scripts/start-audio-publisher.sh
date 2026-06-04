@@ -1,6 +1,9 @@
 #!/bin/bash
 
-ffmpeg \
+/home/gfurse/venue-audio/scripts/fix-audio-input.sh
+sleep 2
+
+exec ffmpeg \
 -f alsa \
 -ar 48000 \
 -ac 2 \

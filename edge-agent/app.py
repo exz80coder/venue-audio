@@ -5,7 +5,13 @@ import os
 
 from ffmpeg_service import start_stream, stop_stream, stream_status, STREAM_DIR
 from streams import STREAMS
-from analytics import record_visit, record_listen_click, get_stats
+from analytics import (
+    record_visit,
+    record_listen_click,
+    get_stats,
+    heartbeat,
+    get_current_listeners
+)
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -162,6 +168,7 @@ class Handler(BaseHTTPRequestHandler):
 
         hostname = self.get_host_name()
         webrtc_url = f"http://{hostname}:8889/{stream['path']}"
+        session_id = f"{self.client_address[0]}-{datetime.utcnow().timestamp()}"
 
         html = f"""
 <!DOCTYPE html>
@@ -169,51 +176,86 @@ class Handler(BaseHTTPRequestHandler):
 <head>
   <title>{stream["label"]}</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
+
+  <script>
+    function sendHeartbeat() {{
+      fetch("/ping?session={session_id}&stream={stream_id}")
+        .catch(() => {{}});
+    }}
+
+    setInterval(sendHeartbeat, 10000);
+    window.onload = sendHeartbeat;
+  </script>
+
   <style>
     body {{
       font-family: Arial, sans-serif;
       background: #10131a;
       color: white;
       text-align: center;
-      padding: 40px 20px;
+      padding: 20px;
       margin: 0;
     }}
+
     .card {{
-      max-width: 420px;
+      max-width: 520px;
       margin: auto;
       background: #1b2230;
       border: 1px solid #30394d;
       border-radius: 20px;
-      padding: 30px;
+      padding: 24px;
     }}
-    a {{
-      display: block;
-      background: #2f80ed;
-      color: white;
-      padding: 18px;
-      border-radius: 14px;
-      text-decoration: none;
-      font-size: 20px;
-      font-weight: bold;
-      margin-top: 24px;
+
+    h1 {{
+      margin-top: 0;
+      font-size: 30px;
     }}
-    .back {{
-      background: #30394d;
-      font-size: 16px;
-    }}
+
     p {{
       color: #c8d0df;
       font-size: 17px;
       line-height: 1.5;
     }}
+
+    iframe {{
+      width: 100%;
+      height: 360px;
+      border: 0;
+      border-radius: 16px;
+      background: #000;
+      margin-top: 20px;
+    }}
+
+    .back {{
+      display: block;
+      background: #30394d;
+      color: white;
+      padding: 16px;
+      border-radius: 14px;
+      text-decoration: none;
+      font-size: 16px;
+      font-weight: bold;
+      margin-top: 20px;
+    }}
+
+    .small {{
+      margin-top: 16px;
+      font-size: 13px;
+      color: #8f9bb0;
+    }}
   </style>
 </head>
+
 <body>
   <div class="card">
     <h1>{stream["label"]}</h1>
     <p>{stream["description"]}</p>
-    <a href="{webrtc_url}">Tap to Listen</a>
+
+    <iframe src="{webrtc_url}" allow="autoplay; microphone; speaker"></iframe>
+
     <a class="back" href="/listen">Choose another TV</a>
+
+    <p class="small">Keep this page open while listening.</p>
   </div>
 </body>
 </html>
@@ -222,6 +264,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def send_admin_page(self):
         stats = get_stats()
+        current_listeners = get_current_listeners()
 
         html = f"""
 <!DOCTYPE html>
@@ -287,6 +330,11 @@ class Handler(BaseHTTPRequestHandler):
     </div>
 
     <div class="card">
+      <div class="label">Current Listeners</div>
+      <div class="value">{current_listeners}</div>
+    </div>
+
+    <div class="card">
       <div class="label">Visits Today</div>
       <div class="value">{stats["today_visits"]}</div>
     </div>
@@ -294,11 +342,6 @@ class Handler(BaseHTTPRequestHandler):
     <div class="card">
       <div class="label">Listen Clicks Today</div>
       <div class="value">{stats["today_listen_clicks"]}</div>
-    </div>
-
-    <div class="card">
-      <div class="label">Total Visits</div>
-      <div class="value">{stats["total_visits"]}</div>
     </div>
 
     <div class="card">
@@ -314,7 +357,6 @@ class Handler(BaseHTTPRequestHandler):
         self.send_html(html)
 
     def do_GET(self):
-
         if self.path == "/":
             self.send_listen_page()
             return
@@ -331,6 +373,27 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/admin":
             self.send_admin_page()
             return
+
+        if self.path.startswith("/ping"):
+            try:
+                query = self.path.split("?")[1]
+                params = {}
+
+                for item in query.split("&"):
+                    key, value = item.split("=")
+                    params[key] = value
+
+                heartbeat(
+                    params["session"],
+                    params["stream"]
+                )
+
+                self.send_json({"status": "ok"})
+                return
+
+            except Exception as ex:
+                self.send_json({"error": str(ex)}, 400)
+                return
 
         if self.path == "/health":
             self.send_json({
@@ -362,7 +425,6 @@ class Handler(BaseHTTPRequestHandler):
         self.send_json({"error": "not found"}, 404)
 
     def do_POST(self):
-
         if self.path == "/stream/start":
             self.send_json(start_stream())
             return

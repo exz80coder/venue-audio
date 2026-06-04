@@ -1,4 +1,5 @@
 from datetime import datetime, date
+from datetime import timedelta
 import json
 import os
 
@@ -15,7 +16,9 @@ def _load():
     with open(DATA_FILE, "r") as file:
         return json.load(file)
 
-
+def get_peak_listeners():
+    return get_current_listeners()
+    
 def _save(data):
     with open(DATA_FILE, "w") as file:
         json.dump(data, file, indent=2)
@@ -63,3 +66,37 @@ def get_stats():
         "today_listen_clicks": len(today_clicks),
         "recent_listen_clicks": data["listen_clicks"][-10:]
     }
+def heartbeat(session_id, stream_id):
+    data = _load()
+
+    if "heartbeats" not in data:
+        data["heartbeats"] = {}
+
+    data["heartbeats"][session_id] = {
+        "stream_id": stream_id,
+        "timestamp": datetime.utcnow().isoformat()
+    }
+
+    _save(data)
+
+
+def get_current_listeners():
+    data = _load()
+
+    if "heartbeats" not in data:
+        return 0
+
+    active = 0
+    cutoff = datetime.utcnow() - timedelta(seconds=30)
+
+    for session in data["heartbeats"].values():
+        try:
+            ts = datetime.fromisoformat(session["timestamp"])
+
+            if ts > cutoff:
+                active += 1
+
+        except Exception:
+            pass
+
+    return active
