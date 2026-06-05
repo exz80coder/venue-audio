@@ -10,7 +10,7 @@ STREAMS = {
         "label": "TV 2 Audio",
         "description": "Second TV audio",
         "path": "tv2",
-        "device": "plughw:1,0",
-        "enabled": False
+        "device": "plughw:3,0",
+        "enabled": True
     }
 }
